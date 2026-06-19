@@ -24,12 +24,14 @@ class PatientRepository
         if ($q !== '') {
             $sql .= "
                 WHERE
-                    name LIKE :q
-                    OR email LIKE :q
-                    OR phone LIKE :q
+                    name LIKE :q1
+                    OR email LIKE :q2
+                    OR phone LIKE :q3
             ";
 
-            $params['q'] = '%' . $q . '%';
+            $params['q1'] = '%' . $q . '%';
+            $params['q2'] = '%' . $q . '%';
+            $params['q3'] = '%' . $q . '%';
         }
 
         $stmt = $this->db->prepare($sql);
@@ -95,11 +97,13 @@ class PatientRepository
         if ($q !== '') {
             $sql .= "
                 WHERE
-                    name LIKE :q
-                    OR email LIKE :q
-                    OR phone LIKE :q
+                    name LIKE :q1
+                    OR email LIKE :q2
+                    OR phone LIKE :q3
             ";
-            $params['q'] = '%' . $q . '%';
+            $params['q1'] = '%' . $q . '%';
+            $params['q2'] = '%' . $q . '%';
+            $params['q3'] = '%' . $q . '%';
         }
 
         $sql .= "

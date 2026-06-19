@@ -14,49 +14,55 @@ class PatientController
 
     public function index(): void
     {
-        $q = trim($_GET['q'] ?? '');
-        $page = max(1, (int) ($_GET['page'] ?? 1));
-        $perPage = 10;
-        $sort = $_GET['sort'] ?? 'created_at';
-        $direction = $_GET['direction'] ?? 'desc';
-        $offset = ($page - 1) * $perPage;
-
-        $repo = $this->repository();
-        $total = $repo->countAll($q);
-
-        $totalPages = max(
-            1,
-            (int) ceil($total / $perPage)
-        );
-
-        if ($page > $totalPages) {
-            $page = $totalPages;
+        try {
+            $q = trim($_GET['q'] ?? '');
+            $page = max(1, (int) ($_GET['page'] ?? 1));
+            $perPage = 10;
+            $sort = $_GET['sort'] ?? 'created_at';
+            $direction = $_GET['direction'] ?? 'desc';
             $offset = ($page - 1) * $perPage;
+
+            $repo = $this->repository();
+            $total = $repo->countAll($q);
+
+            $totalPages = max(
+                1,
+                (int) ceil($total / $perPage)
+            );
+
+            if ($page > $totalPages) {
+                $page = $totalPages;
+                $offset = ($page - 1) * $perPage;
+            }
+
+            $patients = $repo->getPaginated(
+                $q,
+                $perPage,
+                $offset,
+                $sort,
+                $direction
+            );
+
+            view(
+                'patients/index',
+                compact(
+                    'patients',
+                    'q',
+                    'page',
+                    'perPage',
+                    'total',
+                    'totalPages',
+                    'sort',
+                    'direction'
+                )
+            );
+        } catch (Exception $e) {
+            // Bắt lỗi mất kết nối DB và hiển thị Safe Error Message
+            error_log($e->getMessage());
+            http_response_code(500);
+            view('errors/500');
         }
-
-        $patients = $repo->getPaginated(
-            $q,
-            $perPage,
-            $offset,
-            $sort,
-            $direction
-        );
-
-        view(
-            'patients/index',
-            compact(
-                'patients',
-                'q',
-                'page',
-                'perPage',
-                'total',
-                'totalPages',
-                'sort',
-                'direction'
-            )
-        );
     }
-
     public function create(): void
     {
         $errors = [];

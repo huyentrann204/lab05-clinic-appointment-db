@@ -36,7 +36,7 @@
                 <td><?= e($patient['phone']) ?></td>
                 <td>
                     <?php 
-                        // Ép dữ liệu DB về chữ thường hoàn toàn
+                        
                         $g = strtolower(trim($patient['gender'] ?? 'other')); 
                     ?>
                     <span class="badge <?= e($g) ?>">
