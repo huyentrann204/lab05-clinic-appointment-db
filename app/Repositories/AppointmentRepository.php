@@ -1,229 +1,111 @@
 <?php
-
+// app/Repositories/AppointmentRepository.php
 class AppointmentRepository
 {
-    private PDO $pdo;
+    public function __construct(private PDO $db) {}
 
-    public function __construct()
+    public function countAll(string $keyword = ''): int
     {
-        $config = require __DIR__ . '/../../config/database.php';
-
-        $this->pdo = (new Database($config))
-            ->getConnection();
+        $sql = "SELECT COUNT(*) AS total FROM appointments";
+        $params = [];
+        if ($keyword !== '') {
+            $sql .= " WHERE appointment_code LIKE :keyword OR patient_name LIKE :keyword OR patient_email LIKE :keyword";
+            $params['keyword'] = '%' . $keyword . '%';
+        }
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+        return (int) ($stmt->fetch()['total'] ?? 0);
     }
 
-    /**
-     * Đếm tổng số lịch hẹn
-     */
-    public function countAll(string $q = ''): int
+    public function getPaginated(string $keyword, int $limit, int $offset, string $sort, string $direction): array
     {
-        $sql = "
-            SELECT COUNT(*)
-            FROM appointments
-            WHERE
-                appointment_code LIKE :q
-                OR patient_name LIKE :q
-                OR patient_email LIKE :q
-        ";
-
-        $stmt = $this->pdo->prepare($sql);
-
-        $stmt->execute([
-            'q' => "%{$q}%"
-        ]);
-
-        return (int)$stmt->fetchColumn();
-    }
-
-    /**
-     * Danh sách phân trang
-     */
-    public function getPaginated(
-        string $q,
-        int $limit,
-        int $offset,
-        string $sort,
-        string $direction
-    ): array {
-
-        $allowedSorts = [
-            'appointment_code',
-            'appointment_date',
-            'created_at'
-        ];
+        $allowedSorts = ['id', 'appointment_code', 'patient_name', 'patient_email', 'appointment_date', 'status', 'created_at'];
+        $allowedDirections = ['asc', 'desc'];
 
         if (!in_array($sort, $allowedSorts, true)) {
             $sort = 'created_at';
         }
-
-        $allowedDirections = [
-            'asc',
-            'desc'
-        ];
-
         if (!in_array(strtolower($direction), $allowedDirections, true)) {
             $direction = 'desc';
         }
 
-        $sql = "
-            SELECT
-                id,
-                appointment_code,
-                patient_name,
-                patient_email,
-                appointment_date,
-                status,
-                created_at
-            FROM appointments
-            WHERE
-                appointment_code LIKE :q
-                OR patient_name LIKE :q
-                OR patient_email LIKE :q
-            ORDER BY {$sort} {$direction}
-            LIMIT :limit
-            OFFSET :offset
-        ";
+        $sql = "SELECT id, appointment_code, patient_name, patient_email, appointment_date, status, created_at FROM appointments";
+        $params = [];
+        if ($keyword !== '') {
+            $sql .= " WHERE appointment_code LIKE :keyword OR patient_name LIKE :keyword OR patient_email LIKE :keyword";
+            $params['keyword'] = '%' . $keyword . '%';
+        }
+        $sql .= " ORDER BY {$sort} {$direction} LIMIT :limit OFFSET :offset";
 
-        $stmt = $this->pdo->prepare($sql);
-
-        $stmt->bindValue(':q', "%{$q}%");
+        $stmt = $this->db->prepare($sql);
+        foreach ($params as $key => $value) {
+            $stmt->bindValue(':' . $key, $value, PDO::PARAM_STR);
+        }
         $stmt->bindValue(':limit', $limit, PDO::PARAM_INT);
         $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
-
         $stmt->execute();
 
         return $stmt->fetchAll();
     }
 
-    /**
-     * Tạo lịch hẹn mới
-     */
-    public function create(array $data): void
+    public function findById(int $id): ?array
     {
+        $stmt = $this->db->prepare("SELECT * FROM appointments WHERE id = :id");
+        $stmt->execute(['id' => $id]);
+        return $stmt->fetch() ?: null;
+    }
+
+    public function create(array $data): bool
+    {
+        $sql = "INSERT INTO appointments (appointment_code, patient_name, patient_email, appointment_date, status, note) 
+                VALUES (:appointment_code, :patient_name, :patient_email, :appointment_date, :status, :note)";
         try {
-
-            $sql = "
-                INSERT INTO appointments
-                (
-                    appointment_code,
-                    patient_name,
-                    patient_email,
-                    appointment_date,
-                    status,
-                    note
-                )
-                VALUES
-                (
-                    :appointment_code,
-                    :patient_name,
-                    :patient_email,
-                    :appointment_date,
-                    :status,
-                    :note
-                )
-            ";
-
-            $stmt = $this->pdo->prepare($sql);
-
-            $stmt->execute([
+            $stmt = $this->db->prepare($sql);
+            return $stmt->execute([
                 'appointment_code' => $data['appointment_code'],
                 'patient_name' => $data['patient_name'],
-                'patient_email' => $data['patient_email'],
+                'patient_email' => $data['patient_email'] ?: null,
                 'appointment_date' => $data['appointment_date'],
                 'status' => $data['status'],
-                'note' => $data['note']
+                'note' => $data['note'] ?: null,
             ]);
-
         } catch (PDOException $e) {
-
-            if ($e->getCode() == 23000) {
-                throw new DuplicateRecordException();
+            if (($e->errorInfo[1] ?? null) === 1062) {
+                throw new DuplicateRecordException('Mã lịch hẹn đã tồn tại.');
             }
-
             throw $e;
         }
     }
 
-    /**
-     * Tìm theo ID
-     */
-    public function findById(int $id): ?array
+    public function update(int $id, array $data): bool
     {
-        $sql = "
-            SELECT *
-            FROM appointments
-            WHERE id = :id
-        ";
-
-        $stmt = $this->pdo->prepare($sql);
-
-        $stmt->execute([
-            'id' => $id
-        ]);
-
-        $appointment = $stmt->fetch();
-
-        return $appointment ?: null;
-    }
-
-    /**
-     * Update lịch hẹn
-     */
-    public function update(
-        int $id,
-        array $data
-    ): void {
-
+        $sql = "UPDATE appointments
+                SET appointment_code = :appointment_code, patient_name = :patient_name,
+                    patient_email = :patient_email, appointment_date = :appointment_date,
+                    status = :status, note = :note, updated_at = NOW()
+                WHERE id = :id";
         try {
-
-            $sql = "
-                UPDATE appointments
-                SET
-                    appointment_code = :appointment_code,
-                    patient_name = :patient_name,
-                    patient_email = :patient_email,
-                    appointment_date = :appointment_date,
-                    status = :status,
-                    note = :note
-                WHERE id = :id
-            ";
-
-            $stmt = $this->pdo->prepare($sql);
-
-            $stmt->execute([
+            $stmt = $this->db->prepare($sql);
+            return $stmt->execute([
                 'id' => $id,
                 'appointment_code' => $data['appointment_code'],
                 'patient_name' => $data['patient_name'],
-                'patient_email' => $data['patient_email'],
+                'patient_email' => $data['patient_email'] ?: null,
                 'appointment_date' => $data['appointment_date'],
                 'status' => $data['status'],
-                'note' => $data['note']
+                'note' => $data['note'] ?: null,
             ]);
-
         } catch (PDOException $e) {
-
-            if ($e->getCode() == 23000) {
-                throw new DuplicateRecordException();
+            if (($e->errorInfo[1] ?? null) === 1062) {
+                throw new DuplicateRecordException('Mã lịch hẹn đã tồn tại.');
             }
-
             throw $e;
         }
     }
 
-    /**
-     * Xóa lịch hẹn
-     */
-    public function delete(int $id): void
+    public function delete(int $id): bool
     {
-        $sql = "
-            DELETE FROM appointments
-            WHERE id = :id
-        ";
-
-        $stmt = $this->pdo->prepare($sql);
-
-        $stmt->execute([
-            'id' => $id
-        ]);
+        $stmt = $this->db->prepare("DELETE FROM appointments WHERE id = :id");
+        return $stmt->execute(['id' => $id]);
     }
 }

@@ -24,6 +24,15 @@ function flash_get(string $key): ?string
     return $message;
 }
 
+function query_string(array $params = []): string
+{
+    $current = $_GET;
+    foreach ($params as $key => $value) {
+        $current[$key] = $value;
+    }
+    return http_build_query($current);
+}
+
 function view(string $path, array $data = []): void
 {
     extract($data);

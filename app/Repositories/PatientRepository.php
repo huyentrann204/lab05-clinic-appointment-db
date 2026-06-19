@@ -2,14 +2,11 @@
 
 class PatientRepository
 {
-    private PDO $pdo;
+    private PDO $db;
 
-    public function __construct()
+    public function __construct(PDO $db)
     {
-        $config = require __DIR__ . '/../../config/database.php';
-
-        $this->pdo = (new Database($config))
-            ->getConnection();
+        $this->db = $db;
     }
 
     /**
@@ -18,21 +15,27 @@ class PatientRepository
     public function countAll(string $q = ''): int
     {
         $sql = "
-            SELECT COUNT(*)
+            SELECT COUNT(*) AS total
             FROM patients
-            WHERE
-                name LIKE :q
-                OR email LIKE :q
-                OR phone LIKE :q
         ";
 
-        $stmt = $this->pdo->prepare($sql);
+        $params = [];
 
-        $stmt->execute([
-            'q' => "%{$q}%"
-        ]);
+        if ($q !== '') {
+            $sql .= "
+                WHERE
+                    name LIKE :q
+                    OR email LIKE :q
+                    OR phone LIKE :q
+            ";
 
-        return (int)$stmt->fetchColumn();
+            $params['q'] = '%' . $q . '%';
+        }
+
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute($params);
+
+        return (int) ($stmt->fetch()['total'] ?? 0);
     }
 
     /**
@@ -46,25 +49,35 @@ class PatientRepository
         string $direction
     ): array {
 
+        // Thêm status vào danh sách được phép sort
         $allowedSorts = [
+            'id',
             'name',
             'email',
+            'phone',
+            'gender',
+            'status', 
             'created_at'
         ];
-
-        if (!in_array($sort, $allowedSorts, true)) {
-            $sort = 'created_at';
-        }
 
         $allowedDirections = [
             'asc',
             'desc'
         ];
 
-        if (!in_array(strtolower($direction), $allowedDirections, true)) {
+        if (!in_array($sort, $allowedSorts, true)) {
+            $sort = 'created_at';
+        }
+
+        if (!in_array(
+            strtolower($direction),
+            $allowedDirections,
+            true
+        )) {
             $direction = 'desc';
         }
 
+        // Bổ sung gọi field status trong câu SELECT
         $sql = "
             SELECT
                 id,
@@ -72,23 +85,38 @@ class PatientRepository
                 email,
                 phone,
                 gender,
+                status,
                 created_at
             FROM patients
-            WHERE
-                name LIKE :q
-                OR email LIKE :q
-                OR phone LIKE :q
+        ";
+
+        $params = [];
+
+        if ($q !== '') {
+            $sql .= "
+                WHERE
+                    name LIKE :q
+                    OR email LIKE :q
+                    OR phone LIKE :q
+            ";
+            $params['q'] = '%' . $q . '%';
+        }
+
+        $sql .= "
             ORDER BY {$sort} {$direction}
             LIMIT :limit
             OFFSET :offset
         ";
 
-        $stmt = $this->pdo->prepare($sql);
+        $stmt = $this->db->prepare($sql);
 
-        $stmt->bindValue(
-            ':q',
-            "%{$q}%"
-        );
+        foreach ($params as $key => $value) {
+            $stmt->bindValue(
+                ':' . $key,
+                $value,
+                PDO::PARAM_STR
+            );
+        }
 
         $stmt->bindValue(
             ':limit',
@@ -108,73 +136,75 @@ class PatientRepository
     }
 
     /**
-     * Tạo bệnh nhân mới
-     */
-    public function create(array $data): void
-    {
-        try {
-
-            $sql = "
-                INSERT INTO patients
-                (
-                    name,
-                    email,
-                    phone,
-                    gender
-                )
-                VALUES
-                (
-                    :name,
-                    :email,
-                    :phone,
-                    :gender
-                )
-            ";
-
-            $stmt = $this->pdo->prepare($sql);
-
-            $stmt->execute([
-                'name' => $data['name'],
-                'email' => $data['email'],
-                'phone' => $data['phone'],
-                'gender' => $data['gender']
-            ]);
-
-        } catch (PDOException $e) {
-
-            if ($e->getCode() == 23000) {
-                throw new DuplicateRecordException();
-            }
-
-            throw $e;
-        }
-    }
-
-    /**
      * Tìm bệnh nhân theo ID
      */
     public function findById(int $id): ?array
     {
-        $sql = "
+        // Thêm status vào lúc lấy dữ liệu ra sửa
+        $stmt = $this->db->prepare("
             SELECT
                 id,
                 name,
                 email,
                 phone,
-                gender
+                gender,
+                status
             FROM patients
             WHERE id = :id
-        ";
-
-        $stmt = $this->pdo->prepare($sql);
+        ");
 
         $stmt->execute([
             'id' => $id
         ]);
 
-        $patient = $stmt->fetch();
+        return $stmt->fetch() ?: null;
+    }
 
-        return $patient ?: null;
+    /**
+     * Tạo bệnh nhân mới
+     */
+    public function create(array $data): bool
+    {
+        // Bổ sung cột status vào INSERT
+        $sql = "
+            INSERT INTO patients
+            (
+                name,
+                email,
+                phone,
+                gender,
+                status
+            )
+            VALUES
+            (
+                :name,
+                :email,
+                :phone,
+                :gender,
+                :status
+            )
+        ";
+
+        try {
+            $stmt = $this->db->prepare($sql);
+
+            // Truyền dữ liệu status vào
+            return $stmt->execute([
+                'name' => $data['name'],
+                'email' => $data['email'],
+                'phone' => $data['phone'] ?: null,
+                'gender' => $data['gender'],
+                'status' => $data['status']
+            ]);
+
+        } catch (PDOException $e) {
+            if (($e->errorInfo[1] ?? null) === 1062) {
+                throw new DuplicateRecordException(
+                    'Patient email already exists.'
+                );
+            }
+            throw $e;
+        }
     }
 
     /**
@@ -183,36 +213,40 @@ class PatientRepository
     public function update(
         int $id,
         array $data
-    ): void {
+    ): bool {
+
+        // Bổ sung cập nhật cột status
+        $sql = "
+            UPDATE patients
+            SET
+                name = :name,
+                email = :email,
+                phone = :phone,
+                gender = :gender,
+                status = :status,
+                updated_at = NOW()
+            WHERE id = :id
+        ";
 
         try {
+            $stmt = $this->db->prepare($sql);
 
-            $sql = "
-                UPDATE patients
-                SET
-                    name = :name,
-                    email = :email,
-                    phone = :phone,
-                    gender = :gender
-                WHERE id = :id
-            ";
-
-            $stmt = $this->pdo->prepare($sql);
-
-            $stmt->execute([
+            // Truyền dữ liệu status vào
+            return $stmt->execute([
                 'id' => $id,
                 'name' => $data['name'],
                 'email' => $data['email'],
-                'phone' => $data['phone'],
-                'gender' => $data['gender']
+                'phone' => $data['phone'] ?: null,
+                'gender' => $data['gender'],
+                'status' => $data['status']
             ]);
 
         } catch (PDOException $e) {
-
-            if ($e->getCode() == 23000) {
-                throw new DuplicateRecordException();
+            if (($e->errorInfo[1] ?? null) === 1062) {
+                throw new DuplicateRecordException(
+                    'Patient email already exists.'
+                );
             }
-
             throw $e;
         }
     }
@@ -220,16 +254,14 @@ class PatientRepository
     /**
      * Xóa bệnh nhân
      */
-    public function delete(int $id): void
+    public function delete(int $id): bool
     {
-        $sql = "
+        $stmt = $this->db->prepare("
             DELETE FROM patients
             WHERE id = :id
-        ";
+        ");
 
-        $stmt = $this->pdo->prepare($sql);
-
-        $stmt->execute([
+        return $stmt->execute([
             'id' => $id
         ]);
     }
